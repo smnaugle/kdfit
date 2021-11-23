@@ -577,7 +577,32 @@ class BinnedPDF(Signal):
             from scipy.interpolate import RegularGridInterpolator
             interp = RegularGridInterpolator(self.bin_centers,cp.asnumpy(counts),bounds_error=False,fill_value=0)
             return interp(x_kj)
-    
+   
+    def project_pdf(self, dims):
+        '''
+        Projects an n-dimensional pdf over whatever dimensions are not included in dims.
+        dims=array of dimensions to integrate over
+        '''
+        #It's much simpler to just convert back to counts and then sum, and then worry about normalization after.
+        counts = self.counts.get()
+        total_evs = len(self.t_ij)
+        counts = np.asarray(np.round(counts.flatten()*self.bin_vol.get()*total_evs).reshape(counts.shape),dtype=np.int32) #revert to actual counts, then sum over axes
+        binning = self.binning.copy()
+        dims=np.sort(dims)[::-1]
+        proj=counts
+        rem_dims=[0,1,2,3]
+        for dim in dims:
+            proj=np.sum(proj, axis=dim)
+            rem_dims.pop(dim)
+        #now we need to renormalize the counts according to the new bin sizes
+        new_binning=[binning[dim] for dim in rem_dims]
+        new_lows = [binning[dim][0] for dim in rem_dims]
+        new_highs = [binning[dim][-1] for dim in rem_dims]
+        new_bin_edges = binning_to_edges(new_binning,lows=new_lows,highs=new_highs)
+        new_a_kj, new_b_kj = edges_to_points(new_bin_edges)
+        new_bin_vol = np.prod(new_b_kj-new_a_kj,axis=1)
+        return (proj.flatten()/new_bin_vol.get()/total_evs).reshape(proj.shape)
+
     def _transform_syst(self,inputs,t_ij=None):
         '''
         Scales and shifts datapoints by those systematics. Shift is in the units
