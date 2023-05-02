@@ -123,12 +123,12 @@ class KernelDensityPDF(Signal):
                 mask = self.t_ij[:,j] < low
                 t_ij_reflected_low = cp.copy(self.t_ij[mask,:])
                 h_ij_reflected_low = self.h_ij[mask,:]
-                w_i_reflected_low = self.w_i[mask,:]
+                w_i_reflected_low = self.w_i[mask]
                 t_ij_reflected_low[:,j] = 2*l - t_ij_reflected_low[:,j]
                 mask = self.t_ij[:,j] > high
                 t_ij_reflected_high = cp.copy(self.t_ij[mask,:])
                 h_ij_reflected_high = self.h_ij[mask,:]
-                w_i_reflected_high = self.w_i[mask,:]
+                w_i_reflected_high = self.w_i[mask]
                 t_ij_reflected_high[:,j] = 2*h - t_ij_reflected_high[:,j]
             else:
                 t_ij_reflected_low = cp.copy(self.t_ij)
@@ -580,7 +580,7 @@ class BinnedPDF(Signal):
    
     def project_pdf(self, dims):
         '''
-        Projects an n-dimensional pdf over whatever dimensions are not included in dims.
+        Projects an n-dimensional pdf over whichever dimensions are not included in dims.
         dims=array of dimensions to integrate over
         '''
         #It's much simpler to just convert back to counts and then sum, and then worry about normalization after.
