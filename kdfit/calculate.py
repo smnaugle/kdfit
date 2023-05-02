@@ -50,12 +50,14 @@ class Parameter(Calculation):
     value is the initial or fixed value of the Parameter
     constant sets whether the parameter is fixed (True) or floated (False)
     '''
-    def __init__(self, name, value=None, fixed=True):
+    def __init__(self, name, value=None, fixed=True, constraints=None):
+    #def __init__(self, name, value=None, fixed=True):
         super().__init__(name, [], constant=False)
         self.name = name
         self.value = value
         self.fixed = fixed
-        
+        self.constraints = constraints
+
     def link(self,param):
         if param is None:
             self.parents = []

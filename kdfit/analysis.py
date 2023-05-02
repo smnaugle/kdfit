@@ -21,7 +21,8 @@ from .term import Sum
 
 import scipy.optimize as opt
 from functools import partial
-    
+import numpy as np
+
 class Analysis:
     def __init__(self):
         self.parameters = {}
@@ -105,7 +106,7 @@ class Analysis:
             print('Result: ',outputs[0])
         return outputs[0]
         
-    def minimize(self,verbose=False,show_steps=False,**kwargs):
+    def minimize(self,verbose=False,show_steps=False,solver='standard',**kwargs):
         '''
         Will optimize the floated parameters in the current log likelihood 
         calculation to minimize the log likelihood.
@@ -113,7 +114,13 @@ class Analysis:
         Keyword arguments are passed to scipy.optimize.minimize
         '''
         initial = [g if (g:=p.value) is not None else 1.0 for p in self._floated]
-        minimum = opt.minimize(partial(self,show_steps=show_steps,verbose=verbose),x0=initial,**kwargs)
+        bounds = [b if (b:=p.constraints) is not None else [-np.inf,np.inf] for p in self._floated]
+        if solver=='standard':
+            minimum = opt.minimize(partial(self,show_steps=show_steps,verbose=verbose),x0=initial,bounds=bounds,options={**kwargs})
+        elif solver=='dual_annealing':
+            minimum = opt.dual_annealing(partial(self,show_steps=show_steps,verbose=verbose),bounds=bounds,**kwargs)
+        else:
+            raise Exception('Method not implemented...')
         minimum.params = {p:v for p,v in zip(self._floated,minimum.x)}
         return minimum
         
@@ -147,6 +154,12 @@ class Analysis:
                 p.fixed = False
             # compute confidence intervals for each parameter
             for p,v in params.items():
+                #first check if it is a parameter at a boundary, if so skip it
+                if np.any(v == p.constraints):
+                    print('Skipping %s since it is at a boundary'%p.name)
+                    upper[p]=np.nan
+                    lower[p]=np.nan
+                    continue
                 p.fixed = True
                 self.update_likelihood()
                 if method == 'profile':
@@ -159,13 +172,30 @@ class Analysis:
                 # central value left and right of the minimum. Then increase 
                 # step by a factor of two until the step is large enough to
                 # contain the desired root.
-                for step_factor in [0.5,1.0,2.0,5.0,10.0]:
+                
+                # Add in different step factors for scales and systematics
+                # FIXME perhaps there is a more intelligent way to handle nonnegative parameters
+                if 'resolution' in p.name or 'scale' in p.name:
+                    step_factors = [0.1,0.2,0.3,0.4,0.5]
+                    pos_only = True
+                elif 'shift' in p.name:
+                    step_factors = [0.1,0.2,0.3,0.4,0.5]
+                    pos_only = False
+                else:
+                    step_factors = [0.5,1.0,2.0,5.0,10.0]
+                    pos_only = True
+                for step_factor in step_factors:
                     try:
                         step = v*step_factor
-                        lo = opt.brentq(dnll,v-step,v,xtol=0.01,rtol=0.00001)
+                        if v-step<0 and pos_only:
+                            print('Negative lower bound for positive only parameter, setting to nan')
+                            lo=np.nan
+                        else:
+                            lo = opt.brentq(dnll,v-step,v,xtol=0.01,rtol=0.00001)
                         hi = opt.brentq(dnll,v,v+step,xtol=0.01,rtol=0.00001)
                         break
                     except ValueError:
+                        print('ValueError for %s retrying...'%p.name)
                         step_factor *= 2
                 upper[p] = hi-v
                 lower[p] = v-lo
