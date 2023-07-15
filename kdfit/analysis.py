@@ -16,7 +16,7 @@
 #  along with kdfit.  If not, see <https://www.gnu.org/licenses/>.
 
 from .observables import Observables
-from .calculate import Parameter,System
+from .calculate import Parameter, System
 from .term import Sum
 
 import scipy.optimize as opt
@@ -29,67 +29,67 @@ class Analysis:
         self.signals = {}
         self.observables = {}
         
-    def add_parameter(self,name,*args,**kwargs):
+    def add_parameter(self, name, *args, **kwargs):
         if name in self.parameters:
             raise Exception('Duplicate name: '+name)
-        param = Parameter(name,*args,**kwargs)
+        param = Parameter(name, *args, **kwargs)
         self.parameters[name] = param
         return param
         
-    def get_parameter(self,name):
+    def get_parameter(self, name):
         return self.parameters[name]
         
-    def add_observables(self,name,*args,**kwargs):
+    def add_observables(self, name, *args, **kwargs):
         if name in self.observables:
             raise Exception('Duplicate name: '+name)
-        obs = Observables(name,self,*args,**kwargs)
+        obs = Observables(name, self, *args, **kwargs)
         self.observables[obs.name] = obs
         return obs
         
-    def load_mc(self,mc_loaders):
-        for obs,sig_map in mc_loaders.items():
+    def load_mc(self, mc_loaders):
+        for obs, sig_map in mc_loaders.items():
             if type(obs) is str:
                 obs = self.observables[obs]
-            for sig,loader in sig_map.items():
+            for sig, loader in sig_map.items():
                 if type(sig) is str:
                     sig = obs.signals[sig]
                 sig.mc_param.link(loader)
                 
-    def load_data(self,data_loaders):
-        for obs,loader in data_loaders.items():
+    def load_data(self, data_loaders):
+        for obs, loader in data_loaders.items():
             if type(obs) is str:
                 obs = self.observables[obs]
             obs.data_param.link(loader)
             
-    def create_likelihood(self,verbose=False):
+    def create_likelihood(self, verbose=False):
         '''
         Builds a calculation system that computes the sum of the log likelihood
         from all Observables in this Analysis. This *must* be called again if
-        the topology of the calculation changes (new objects), but should 
-        neither be called to adjust whether Parameters are floated or fixed, nor 
+        the topology of the calculation changes (new objects), but should
+        neither be called to adjust whether Parameters are floated or fixed, nor
         if their values changed (call update_likelihood instead).
         '''
         self._terms = []
-        for name,obs in self.observables.items():
+        for name, obs in self.observables.items():
             nllfn = obs.get_likelihood()
             self._terms.append(nllfn)
-        self._outputs = [Sum('Total_Likelihood',*self._terms)]
+        self._outputs = [Sum('Total_Likelihood', *self._terms)]
         if verbose:
-            print('Ouput Values:',self._outputs)
-        self._system = System(self._outputs,verbose=verbose)
+            print('Ouput Values:', self._outputs)
+        self._system = System(self._outputs, verbose=verbose)
         self.update_likelihood(verbose=verbose)
         
-    def update_likelihood(self,verbose=False):
+    def update_likelihood(self, verbose=False):
         '''
         If Parameters are changed from fixed to floated, call this method before
         evaluating the likelihood.
         '''
-        self._floated,self._fixed = self._system.classify_inputs()
+        self._floated, self._fixed = self._system.classify_inputs()
         if verbose:
-            print('Floated Parameters:',self._floated)
-            print('Fixed Parameters:',self._fixed)
+            print('Floated Parameters:', self._floated)
+            print('Fixed Parameters:', self._fixed)
         
-    def __call__(self,floated_params=None,verbose=False,show_steps=False):
+    def __call__(self, floated_params=None, verbose=False, show_steps=False):
         '''
         Performs the current log likelihood calculation and returns the result.
         
@@ -100,42 +100,42 @@ class Analysis:
         if floated_params is None:
             floated_params = [p.value for p in self._floated]
         if show_steps:
-            print('Evaluating at: ',', '.join(['%0.2f'%x for x in floated_params]))
-        outputs = self._system.calculate(floated_params,verbose=verbose)
+            print('Evaluating at: ', ', '.join(['%0.2f'%x for x in floated_params]))
+        outputs = self._system.calculate(floated_params, verbose=verbose)
         if show_steps:
-            print('Result: ',outputs[0])
+            print('Result: ', outputs[0])
         return outputs[0]
         
-    def minimize(self,verbose=False,show_steps=False,solver='standard',**kwargs):
+    def minimize(self, verbose=False, show_steps=False, solver='standard', **kwargs):
         '''
-        Will optimize the floated parameters in the current log likelihood 
+        Will optimize the floated parameters in the current log likelihood
         calculation to minimize the log likelihood.
         
         Keyword arguments are passed to scipy.optimize.minimize
         '''
         initial = [g if (g:=p.value) is not None else 1.0 for p in self._floated]
-        bounds = [b if (b:=p.constraints) is not None else [-np.inf,np.inf] for p in self._floated]
+        bounds = [b if (b:=p.constraints) is not None else [-np.inf, np.inf] for p in self._floated]
         if solver=='standard':
-            minimum = opt.minimize(partial(self,show_steps=show_steps,verbose=verbose),x0=initial,bounds=bounds,options={**kwargs})
+            minimum = opt.minimize(partial(self, show_steps=show_steps, verbose=verbose), x0=initial, bounds=bounds, options={**kwargs})
         elif solver=='dual_annealing':
-            minimum = opt.dual_annealing(partial(self,show_steps=show_steps,verbose=verbose),bounds=bounds,**kwargs)
+            minimum = opt.dual_annealing(partial(self, show_steps=show_steps, verbose=verbose), bounds=bounds, **kwargs)
         else:
             raise Exception('Method not implemented...')
-        minimum.params = {p:v for p,v in zip(self._floated,minimum.x)}
+        minimum.params = {p: v for p, v in zip(self._floated, minimum.x)}
         return minimum
         
-    def _delta_nll_profile(self,m,p,x,ci_delta=0.5,margs={}):
+    def _delta_nll_profile(self, m, p, x, ci_delta=0.5, margs={}):
         p.value = x
         return self.minimize(**margs).fun - m.fun - ci_delta
 
-    def _delta_nll_scan(self,m,p,x,ci_delta=0.5):
+    def _delta_nll_scan(self, m, p, x, ci_delta=0.5):
         p.value = x
         return self() - m.fun - ci_delta
 
-    def confidence_intervals(self,minimum,method='scan',ci_delta=0.5,params=None,margs={}):
+    def confidence_intervals(self, minimum, method='scan', ci_delta=0.5, params=None, margs={}):
         '''
-        Will either scan or profile the current likelihood to find the positive 
-        and negative confidence intervals for minimized parameters about the 
+        Will either scan or profile the current likelihood to find the positive
+        and negative confidence intervals for minimized parameters about the
         minimum.
         
         If profiling, the margs dictionary is used for keyword arguments to the
@@ -144,16 +144,16 @@ class Analysis:
         The desired confidence interval is given by ci_delta, which is a delta
         in the negative log likelihood from the minimum (0.5 for one sigma, etc)
         '''
-        params = minimum.params if params is None else {p:minimum.params[p] for p in params}
-        initial_state = [(p.value,p.fixed) for p in params]
-        upper,lower = {},{}
+        params = minimum.params if params is None else {p: minimum.params[p] for p in params}
+        initial_state = [(p.value, p.fixed) for p in params]
+        upper, lower = {}, {}
         try:
             # set all parameters to minimum values
-            for p,v in params.items():
+            for p, v in params.items():
                 p.value = v
                 p.fixed = False
             # compute confidence intervals for each parameter
-            for p,v in params.items():
+            for p, v in params.items():
                 #first check if it is a parameter at a boundary, if so skip it
                 if np.any(v == p.constraints):
                     print('Skipping %s since it is at a boundary'%p.name)
@@ -163,13 +163,13 @@ class Analysis:
                 p.fixed = True
                 self.update_likelihood()
                 if method == 'profile':
-                    dnll = partial(self._delta_nll_profile,minimum,p,margs=margs,ci_delta=ci_delta)
+                    dnll = partial(self._delta_nll_profile, minimum, p, margs=margs, ci_delta=ci_delta)
                 elif method == 'scan':
-                    dnll = partial(self._delta_nll_scan,minimum,p,ci_delta=ci_delta)
+                    dnll = partial(self._delta_nll_scan, minimum, p, ci_delta=ci_delta)
                 else:
                     raise Exception('Unknown confidence interval method')
                 # brentq needs a bracketed interval. First try stepping half the
-                # central value left and right of the minimum. Then increase 
+                # central value left and right of the minimum. Then increase
                 # step by a factor of two until the step is large enough to
                 # contain the desired root.
                 
@@ -191,8 +191,8 @@ class Analysis:
                             print('Negative lower bound for positive only parameter, setting to nan')
                             lo=np.nan
                         else:
-                            lo = opt.brentq(dnll,v-step,v,xtol=0.01,rtol=0.00001)
-                        hi = opt.brentq(dnll,v,v+step,xtol=0.01,rtol=0.00001)
+                            lo = opt.brentq(dnll, v-step, v, xtol=0.01, rtol=0.00001)
+                        hi = opt.brentq(dnll, v, v+step, xtol=0.01, rtol=0.00001)
                         break
                     except ValueError:
                         print('ValueError for %s retrying...'%p.name)
@@ -203,12 +203,10 @@ class Analysis:
                 p.value = v
         finally:
             # Put parameter settings back to how they were before
-            for p,(v,c) in zip(params,initial_state):
+            for p, (v, c) in zip(params, initial_state):
                 p.value = v
                 p.fixed = c
             self.update_likelihood()
         minimum.upper = upper
         minimum.lower = lower
         return minimum
-        
-

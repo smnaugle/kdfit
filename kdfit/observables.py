@@ -17,7 +17,7 @@
 
 import numpy as np
 from .term import UnbinnedNegativeLogLikelihoodFunction, BinnedNegativeLogLikelihoodFunction
-from .signal import Signal,KernelDensityPDF
+from .signal import Signal, KernelDensityPDF
 from .calculate import Calculation
 
 class Observables(Calculation):
@@ -26,14 +26,14 @@ class Observables(Calculation):
     to calculate its likelihood.
     
     Contains the following:
-        - A list of quantities that define the axes (dimesions) of some 
+        - A list of quantities that define the axes (dimesions) of some
           multidimensional PDF along with the lower (lows) and upper (highs) ROI
-          for each axis 
+          for each axis
         - A set of component event classes (signals) which are used to build the
           full PDF by summing the contribution from each class
     '''
     
-    def __init__(self,name,analysis,binning=None):
+    def __init__(self, name, analysis, binning=None):
         self.name = name
         self.analysis = analysis
         self.dimensions = []
@@ -48,37 +48,37 @@ class Observables(Calculation):
         
         self.last_data = None
         # Should be linked to something that loads data when called (DataLoader)
-        self.data_param = self.analysis.add_parameter(name+'_data',fixed=False)
-        super().__init__(name,[self.data_param])
+        self.data_param = self.analysis.add_parameter(name+'_data', fixed=False)
+        super().__init__(name, [self.data_param])
     
-    def add_dimension(self,name,low,high):
+    def add_dimension(self, name, low, high):
         self.dimensions.append(name)
         self.lows.append(low)
         self.highs.append(high)
-        scale = self.analysis.add_parameter(name+'_scale',value=1.0)
+        scale = self.analysis.add_parameter(name+'_scale', value=1.0)
         self.scales.append(scale)
-        shift = self.analysis.add_parameter(name+'_shift',value=0.0)
+        shift = self.analysis.add_parameter(name+'_shift', value=0.0)
         self.shifts.append(shift)
-        resolution = self.analysis.add_parameter(name+'_resolution',value=0.0)
+        resolution = self.analysis.add_parameter(name+'_resolution', value=0.0)
         self.resolutions.append(resolution)
-        return scale,shift,resolution
+        return scale, shift, resolution
         
-    def add_signal(self,name,*args,pdf=KernelDensityPDF,**kwargs):
+    def add_signal(self, name, *args, pdf=KernelDensityPDF, **kwargs):
         if name in self.signals:
             raise Exception('Duplicate name: '+name)
-        sig = pdf(name,self,*args,**kwargs)
+        sig = pdf(name, self, *args, **kwargs)
         self.signals[name] = sig
         return sig
         
-    def load_data(self,x_ij):
+    def load_data(self, x_ij):
         self.x_ij = x_ij
         
-    def eval_pdf(obs, x_j):
+    def eval_pdf(self, obs, x_j):
         return self.eval_pdf_multi([x_j])[0]
     
     def eval_pdf_multi(self, x_kj):
         n_evs = [s.nev_param.value for s in self.signals.values()]
-        return np.sum([ n*s.eval_pdf_multi(x_kj) for n,s in zip(n_evs,self.signals.values()) ],axis=0)/np.sum(n_evs)
+        return np.sum([n*s.eval_pdf_multi(x_kj) for n, s in zip(n_evs, self.signals.values())], axis=0)/np.sum(n_evs)
     
     def get_likelihood(self):
         if self.binning is None:
@@ -93,7 +93,7 @@ class Observables(Calculation):
                 self,
                 binning=self.binning)
     
-    def calculate(self,inputs,verbose=False):
+    def calculate(self, inputs, verbose=False):
         #even if calculate is rerun, only reload data if the loader changed
         if self.last_data is not inputs[0]:
             self.load_data(inputs[0]())

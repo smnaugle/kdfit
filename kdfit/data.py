@@ -18,13 +18,13 @@
 from .calculate import Calculation
 
 import numpy as np
-try:    
+try:
     import uproot4
-except:
+except Exception:
     pass
 try:
     import h5py
-except:
+except Exception:
     pass
 
 class DataLoader(Calculation):
@@ -33,10 +33,10 @@ class DataLoader(Calculation):
     to load data of other formats. Subclasses should load data when called.
     '''
     
-    def __init__(self,name):
+    def __init__(self, name):
         super().__init__(name, [], constant=True)
         
-    def calculate(self,inputs,verbose=False):
+    def calculate(self, inputs, verbose=False):
         return self
 
 
@@ -48,21 +48,21 @@ class HDF5Data(DataLoader):
     larger dataset.
     '''
 
-    def __init__(self,name,filenames,datasets,max_events=None):
+    def __init__(self, name, filenames, datasets, max_events=None):
         super().__init__(name)
         self.filenames = filenames
         self.datasets = datasets
         self.max_events = max_events
     
     def __call__(self):
-        print('Loading:',', '.join(self.filenames))
+        print('Loading:', ', '.join(self.filenames))
         data = [[] for ds in self.datasets]
         for fname in self.filenames:
-            with h5py.File(fname,'r') as hf:
+            with h5py.File(fname, 'r') as hf:
                 total = len(data[0])
-                for j,ds in enumerate(self.datasets):
+                for j, ds in enumerate(self.datasets):
                     if self.max_events is not None:
-                        to_read = self.max_events - total 
+                        to_read = self.max_events - total
                         ds = hf[ds]
                         if total > ds.shape[0]:
                             data[j].extend(ds[:])
@@ -73,7 +73,7 @@ class HDF5Data(DataLoader):
             if self.max_events is not None and len(data[0]) >= self.max_events:
                 break
         if self.max_events is not None:
-            return np.asarray(data)[:,:self.max_events].T
+            return np.asarray(data)[:, :self.max_events].T
         else:
             return np.asarray(data).T
             
@@ -83,13 +83,13 @@ class BinnedHDF5Data(DataLoader):
     Assumes data is pre-binned store in a dataset named 'binned'
     '''
 
-    def __init__(self,name,filename):
+    def __init__(self, name, filename):
         super().__init__(name)
         self.filename = filename
     
     def __call__(self):
-        print('Loading:',', '.join(self.filename))
-        with h5py.File(self.filename,'r') as hf:
+        print('Loading:', ', '.join(self.filename))
+        with h5py.File(self.filename, 'r') as hf:
             return hf['binned'][:]
         
 class NPYData(DataLoader):
@@ -100,22 +100,22 @@ class NPYData(DataLoader):
     larger dataset.
     '''
 
-    def __init__(self,name,filenames,indexes,ordering='ij'):
+    def __init__(self, name, filenames, indexes, ordering='ij'):
         super().__init__(name)
         self.filenames = filenames
-        self.indexes = np.asarray(indexes,dtype=np.int32)
+        self.indexes = np.asarray(indexes, dtype=np.int32)
         self.ordering = ordering
         
     def __call__(self):
-        print('Loading:',', '.join(self.filenames))
+        print('Loading:', ', '.join(self.filenames))
         x_nij = []
         for fname in self.filenames:
             events = np.load(fname)
             if self.ordering == 'ij':
-                x_ = events[:,self.indexes]
+                x_ = events[:, self.indexes]
                 x_nij.append(x_)
             elif self.ordering == 'ji':
-                x_ = events[self.indexes,:]
+                x_ = events[self.indexes, :]
                 x_nij.append(x_.T)
             else:
                 raise Exception('Unknown ordering')
@@ -123,14 +123,14 @@ class NPYData(DataLoader):
                     
 class SNOPlusNTuple(DataLoader):
 
-    def __init__(self,name,filenames,branches,max_events=None):
+    def __init__(self, name, filenames, branches, max_events=None):
         super().__init__(name)
         self.filenames = filenames
         self.branches = branches
         self.max_events = max_events
         
     def __call__(self):
-        print('Loading:',', '.join(self.filenames))
+        print('Loading:', ', '.join(self.filenames))
         x_nij = []
         events = 0
         for fname in self.filenames:
@@ -141,7 +141,7 @@ class SNOPlusNTuple(DataLoader):
                     events += x_ji.shape[1]
                 if self.max_events is not None and events > self.max_events:
                     break
-            except:
-                print('Couldn''t read',fname)
-        print('Loaded',events,'events')
+            except Exception:
+                print('Couldn\'t read', fname)
+        print('Loaded', events, 'events')
         return np.concatenate(x_nij)
