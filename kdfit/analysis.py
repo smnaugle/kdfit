@@ -155,11 +155,12 @@ class Analysis:
             # compute confidence intervals for each parameter
             for p, v in params.items():
                 #first check if it is a parameter at a boundary, if so skip it
-                if np.any(v == p.constraints):
-                    print('Skipping %s since it is at a boundary'%p.name)
-                    upper[p]=np.nan
-                    lower[p]=np.nan
-                    continue
+                # FIXME: This if should rather mention that the interval will be calculated using a 0 prior for negative values
+                #if np.any(v == p.constraints):
+                #    print('Skipping %s since it is at a boundary'%p.name)
+                #    upper[p]=np.nan
+                #    lower[p]=np.nan
+                #    continue
                 p.fixed = True
                 self.update_likelihood()
                 if method == 'profile':
@@ -173,20 +174,27 @@ class Analysis:
                 # step by a factor of two until the step is large enough to
                 # contain the desired root.
                 
-                # Add in different step factors for scales and systematics
-                # FIXME perhaps there is a more intelligent way to handle nonnegative parameters
-                if 'resolution' in p.name or 'scale' in p.name:
-                    step_factors = [0.1,0.2,0.3,0.4,0.5]
-                    pos_only = True
-                elif 'shift' in p.name:
-                    step_factors = [0.1,0.2,0.3,0.4,0.5]
-                    pos_only = False
+                # Add in different step factors for systematics
+                # TODO: perhaps there is a more intelligent way to handle nonnegative parameters
+                # FIXME: We should use the *= part of the step factor loop rather than manually setting step sizes
+                pos_only=False
+                if 'resolution' in p.name or 'scale' in p.name or 'shift' in p.name:
+                    step_factor = 0.1
+                    if 'resolution' in p.name or 'scale' in p.name:
+                        pos_only = True
+                # Set step factors for _nev parameters
+                elif '_nev' in p.name:
+                    step_factor = 0.5
+                    if p.constraints[0]==0:
+                        pos_only = True
                 else:
-                    step_factors = [0.5,1.0,2.0,5.0,10.0]
-                    pos_only = True
-                for step_factor in step_factors:
+                    print('No custom settings for param %s' % p.name)
+                    print('Defaulting to standard parameter settings.')
+                    step_factor = 0.5
+                    pos_only = False
+                while True:
                     try:
-                        step = v*step_factor
+                        step = np.abs(v)*step_factor if v!=0 else step_factor
                         if v-step<0 and pos_only:
                             print('Negative lower bound for positive only parameter, setting to nan')
                             lo=np.nan
@@ -210,3 +218,45 @@ class Analysis:
         minimum.upper = upper
         minimum.lower = lower
         return minimum
+
+    def posterior_probability(self, minimum, post_param, margs={}, interval=None, ndx=20):
+        '''
+        Will profile the current likelihood to map the unnormalized posterior probability.
+        post_param is the parameter for which the posterior probability will be mapped.
+        '''
+        params = minimum.params
+        initial_state = [(p.value, p.fixed) for p in params]
+        if interval is None:
+            # If no confidence interval is provided, calculate it up to 5 sigma
+            post_min = minimum
+            post_min = self.confidence_intervals(post_min, method='profile', ci_delta=2.5, params=[post_param])
+            lo, hi = [post_min.lower[post_param], post_min.upper[post_param]]
+            if np.isnan(post_min.lower[post_param]):
+                lo = post_param.constraints[0]
+            if np.isnan(post_min.upper[post_param]):
+                hi = post_param.constraints[1]
+            interval = [lo, hi]
+        try:
+            # set all parameters to minimum values
+            for p, v in params.items():
+                p.value = v
+                p.fixed = False
+            p = post_param
+            v = params[post_param]
+            p.fixed = True
+            self.update_likelihood()
+            vals = np.linspace(interval[0], interval[1], ndx)
+            likelihoods = []
+            for val in vals:
+                # Get the delta nll value for this value of the posterior param
+                nll = self._delta_nll_profile(minimum, p, x=val, margs=margs, ci_delta=0)
+                likelihoods.append(np.exp(-nll))
+            p.fixed = False
+            p.value = v
+        finally:
+            # Put parameter settings back to how they were before
+            for p, (v, c) in zip(params, initial_state):
+                p.value = v
+                p.fixed = c
+            self.update_likelihood()
+        return vals, likelihoods

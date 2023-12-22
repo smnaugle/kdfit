@@ -477,7 +477,7 @@ class KernelDensityPDF(Signal):
                     raise Exception('NaN value probability in '+self.name)
                 return pdf_k.get() if get else pdf_k
    
-    def project_pdf(self,):
+    def project_pdf(self, dims):
         '''
         Integrates the KDE PDF to create a projection along the specified dimensions
         '''
@@ -585,8 +585,12 @@ class BinnedPDF(Signal):
         '''
         Projects an n-dimensional pdf over whichever dimensions are not included in dims.
         dims=array of dimensions to integrate over
+        TODO:
+        This should intelligently figure out the number of dimensions from the PDF
+        and then you just specify the dimension(s) to project down to.
+        Should also add in ability to change the range that the integral integrates over for each dimension
+        It's much simpler to just convert back to counts and then sum, and then worry about normalization after.
         '''
-        #It's much simpler to just convert back to counts and then sum, and then worry about normalization after.
         counts = self.counts.get()
         total_evs = len(self.t_ij)
         #Revert to actual counts, then sum over axes
@@ -594,7 +598,7 @@ class BinnedPDF(Signal):
         binning = self.binning.copy()
         dims=np.sort(dims)[::-1]
         proj=counts
-        rem_dims=[0,1,2,3]
+        rem_dims=[0, 1, 2, 3]
         for dim in dims:
             proj=np.sum(proj, axis=dim)
             rem_dims.pop(dim)
