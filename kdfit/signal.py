@@ -85,15 +85,15 @@ class KernelDensityPDF(Signal):
     estimation algorithm with GPU acceleration
     '''
 
-    def __init__(self, name, observables, reflect_axes=None, value=None, bootstrap_binning=None, rho=1.0):
+    def __init__(self, name, observables, reflect_axes=None, value=None, bootstrap_binning=None, rho=1.0, signal_lows=None, signal_highs=None, h_const=None):
         self.rho = rho
         self.bootstrap_binning = bootstrap_binning
         if bootstrap_binning is not None:
             self.bin_edges = binning_to_edges(bootstrap_binning, lows=observables.lows, highs=observables.highs)
             self.indexes = [np.arange(len(edges)) for edges in self.bin_edges]
             self.a_kj, self.b_kj = edges_to_points(self.bin_edges)
-            self.bin_centers = [(edges[:-1]+edges[1:])/2 for edges in self.bin_edges]
-            #self.bin_centers = cp.asarray([(edges[:-1]+edges[1:])/2 for edges in self.bin_edges])
+            #self.bin_centers = [(edges[:-1]+edges[1:])/2 for edges in self.bin_edges]
+            self.bin_centers = cp.asarray([(edges[:-1]+edges[1:])/2 for edges in self.bin_edges])
             self.bin_vol = cp.ascontiguousarray(cp.prod(self.b_kj-self.a_kj, axis=1))
         self.reflect_axes = reflect_axes if reflect_axes is not None else [False for _ in range(len(observables.dimensions))]
         self.a = cp.asarray([lo for lo in observables.lows])
@@ -102,10 +102,22 @@ class KernelDensityPDF(Signal):
         # Should be linked to something that loads MC when called (DataLoader)
         self.mc_param = observables.analysis.add_parameter(name+'_mc', fixed=False)
         self.cur_mc = None
+        if signal_lows is not None:
+            self.signal_lows = signal_lows
+        else:
+            self.signal_lows = observables.lows
+        if signal_highs is not None:
+            self.signal_highs = signal_highs
+        else:
+            self.signal_highs = observables.highs
+        if h_const is None:
+            self.h_ij = None
+        else:
+            self.h_ij = h_const
         super().__init__(name, observables, [self.mc_param]+self.systematics, value=value)
         
     def load_mc(self, t_ij):
-        for j, (l, h) in enumerate(zip(self.observables.lows, self.observables.highs)):
+        for j, (l, h) in enumerate(zip(self.signal_lows, self.signal_highs)):
             in_bounds = np.logical_and(t_ij[:, j] > l, t_ij[:, j] < h)
             t_ij = t_ij[in_bounds]
         self.t_ij = cp.asarray(t_ij)
@@ -114,8 +126,11 @@ class KernelDensityPDF(Signal):
             counts, _ = cp.histogramdd(cp.asarray(self.t_ij), bins=self.bin_edges, weights=cp.asarray(self.w_i))
             self.counts = (cp.asarray(counts).flatten()/self.bin_vol/cp.sum(cp.asarray(counts))).reshape(counts.shape)
         self.sigma_j = cp.std(self.t_ij, axis=0)
-        self.h_ij = self._adapt_bandwidth()
-        for j, (l, h, refl) in enumerate(zip(self.observables.lows, self.observables.highs, self.reflect_axes)):
+        if self.h_ij is None:
+            self.h_ij = self._adapt_bandwidth()
+        elif isinstance(self.h_ij, float):
+            self.h_ij = cp.zeros(self.t_ij.shape) + self.h_ij
+        for j, (l, h, refl) in enumerate(zip(self.signal_lows, self.signal_highs, self.reflect_axes)):
             if not refl:
                 continue
             if type(refl) == tuple:
@@ -208,9 +223,9 @@ class KernelDensityPDF(Signal):
             from scipy.interpolate import RegularGridInterpolator
             
             #bandaid fix for different bin_center types FIXME
-            for i in range(0, len(self.bin_centers)):  # must convert the arrays in the list to numpy arrays first or else scipy handles it incorrectly
-                self.bin_centers[i]=np.asarray(self.bin_centers[i].get())
-            interp = RegularGridInterpolator(self.bin_centers, cp.asnumpy(self.counts), bounds_error=False, fill_value=None)
+            #for i in range(0, len(self.bin_centers)):  # must convert the arrays in the list to numpy arrays first or else scipy handles it incorrectly
+            #    self.bin_centers[i]=np.asarray(self.bin_centers[i])
+            interp = RegularGridInterpolator(cp.asnumpy(self.bin_centers), cp.asnumpy(self.counts), bounds_error=False, fill_value=None)
             pdf_k = cp.asarray(interp(x_kj))
             min_val = np.min(self.counts)
             pdf_k[pdf_k<min_val] = min_val

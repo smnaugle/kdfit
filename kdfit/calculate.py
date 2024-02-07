@@ -51,13 +51,16 @@ class Parameter(Calculation):
     constant sets whether the parameter is fixed (True) or floated (False)
     '''
 
-    def __init__(self, name, value=None, fixed=True, constraints=None):
+    def __init__(self, name, value=None, fixed=True, constraints=None, value_sigma=np.inf, value_expectation=0):
         #def __init__(self, name, value=None, fixed=True):
         super().__init__(name, [], constant=False)
         self.name = name
         self.value = value
         self.fixed = fixed
         self.constraints = constraints
+        #FIXME: bad implementation, should fix
+        self.value_sigma = value_sigma
+        self.value_expectation = value_expectation
 
     def link(self, param):
         if param is None:

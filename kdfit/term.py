@@ -59,6 +59,9 @@ class UnbinnedNegativeLogLikelihoodFunction(Calculation):
         super().__init__(name, n_evs+pdf_sk)
 
     def calculate(self, inputs, verbose=False):
+        #FIXME: bad implementation, should fix
+        self.value_sigmas = cp.asarray([s.nev_param.value_sigma for s in self.signals])
+        self.value_expectations = cp.asarray([s.nev_param.value_expectation for s in self.signals])
         n_evs = cp.asarray(list(inputs[:len(self.signals)]))
         pdf_sk = cp.asarray(list(inputs[len(self.signals):]))
         if verbose:
@@ -67,7 +70,9 @@ class UnbinnedNegativeLogLikelihoodFunction(Calculation):
         if cp == np:  # No GPU acceleration
             res = np.sum(n_evs) - np.sum(np.log(pdf_k))
         else:
-            res = cp.sum(n_evs).get() - cp.sum(cp.log(pdf_k)).get()
+            #res = cp.sum(n_evs).get() - cp.sum(cp.log(pdf_k)).get()
+            res = cp.sum(n_evs).get() - cp.sum(cp.log(pdf_k)).get()\
+                + 0.5*cp.sum(cp.square(n_evs-self.value_expectations).T*1/(cp.square(self.value_sigmas))).get()  # Penalty term for known rates
         if verbose:
             print('NLL:', res)
         if np.isnan(res):
