@@ -85,8 +85,10 @@ class KernelDensityPDF(Signal):
     estimation algorithm with GPU acceleration
     '''
 
-    def __init__(self, name, observables, reflect_axes=None, value=None, bootstrap_binning=None, rho=1.0, signal_lows=None, signal_highs=None, h_const=None):
+    def __init__(self, name, observables, reflect_axes=None, value=None, bootstrap_binning=None, rho=1.0, signal_lows=None, signal_highs=None,
+                 smearing='adaptive'):
         self.rho = rho
+        self.smearing = smearing
         self.bootstrap_binning = bootstrap_binning
         if bootstrap_binning is not None:
             self.bin_edges = binning_to_edges(bootstrap_binning, lows=observables.lows, highs=observables.highs)
@@ -110,10 +112,6 @@ class KernelDensityPDF(Signal):
             self.signal_highs = signal_highs
         else:
             self.signal_highs = observables.highs
-        if h_const is None:
-            self.h_ij = None
-        else:
-            self.h_ij = h_const
         super().__init__(name, observables, [self.mc_param]+self.systematics, value=value)
         
     def load_mc(self, t_ij):
@@ -126,10 +124,12 @@ class KernelDensityPDF(Signal):
             counts, _ = cp.histogramdd(cp.asarray(self.t_ij), bins=self.bin_edges, weights=cp.asarray(self.w_i))
             self.counts = (cp.asarray(counts).flatten()/self.bin_vol/cp.sum(cp.asarray(counts))).reshape(counts.shape)
         self.sigma_j = cp.std(self.t_ij, axis=0)
-        if self.h_ij is None:
+        if self.smearing == 'adaptive':
             self.h_ij = self._adapt_bandwidth()
-        elif isinstance(self.h_ij, float):
-            self.h_ij = cp.zeros(self.t_ij.shape) + self.h_ij
+        elif self.smearing == 'constant':
+            self.h_ij = cp.zeros(self.t_ij.shape) + self.rho
+        else:
+            raise ValueError('Smearing strategy %s not understood, exiting.' % self.smearing)
         for j, (l, h, refl) in enumerate(zip(self.signal_lows, self.signal_highs, self.reflect_axes)):
             if not refl:
                 continue
