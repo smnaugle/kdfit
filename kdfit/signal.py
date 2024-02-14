@@ -130,7 +130,8 @@ class KernelDensityPDF(Signal):
             self.h_ij = cp.zeros(self.t_ij.shape) + self.rho
         else:
             raise ValueError('Smearing strategy %s not understood, exiting.' % self.smearing)
-        for j, (l, h, refl) in enumerate(zip(self.signal_lows, self.signal_highs, self.reflect_axes)):
+        #For reflections, we want to reflect about the lower bound of the dimension, not the loading cut
+        for j, (l, h, refl) in enumerate(zip(self.observables.lows, self.observables.highs, self.reflect_axes)):
             if not refl:
                 continue
             if type(refl) == tuple:
