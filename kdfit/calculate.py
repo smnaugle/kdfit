@@ -58,7 +58,6 @@ class Parameter(Calculation):
         self.value = value
         self.fixed = fixed
         self.constraints = constraints
-        #FIXME: bad implementation, should fix
         self.value_sigma = value_sigma
         self.value_expectation = value_expectation
 

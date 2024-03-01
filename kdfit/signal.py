@@ -94,8 +94,8 @@ class KernelDensityPDF(Signal):
             self.bin_edges = binning_to_edges(bootstrap_binning, lows=observables.lows, highs=observables.highs)
             self.indexes = [np.arange(len(edges)) for edges in self.bin_edges]
             self.a_kj, self.b_kj = edges_to_points(self.bin_edges)
-            #self.bin_centers = [(edges[:-1]+edges[1:])/2 for edges in self.bin_edges]
-            self.bin_centers = cp.asarray([(edges[:-1]+edges[1:])/2 for edges in self.bin_edges])
+            self.bin_centers = [(edges[:-1]+edges[1:])/2 for edges in self.bin_edges]
+            #self.bin_centers = cp.asarray([(edges[:-1]+edges[1:])/2 for edges in self.bin_edges])
             self.bin_vol = cp.ascontiguousarray(cp.prod(self.b_kj-self.a_kj, axis=1))
         self.reflect_axes = reflect_axes if reflect_axes is not None else [False for _ in range(len(observables.dimensions))]
         self.a = cp.asarray([lo for lo in observables.lows])
@@ -127,7 +127,10 @@ class KernelDensityPDF(Signal):
         if self.smearing == 'adaptive':
             self.h_ij = self._adapt_bandwidth()
         elif self.smearing == 'constant':
-            self.h_ij = cp.zeros(self.t_ij.shape) + self.rho
+            if type(self.rho) is not tuple or len(self.rho) != t_ij.shape[1]:
+                raise ValueError('''Constant smearing rho length does not match the number of dimensions.
+                                    rho must be a tuple for constant smearing, even for 1D fits.''')
+            self.h_ij = cp.tile(self.rho, (len(self.t_ij), 1))
         else:
             raise ValueError('Smearing strategy %s not understood, exiting.' % self.smearing)
         #For reflections, we want to reflect about the lower bound of the dimension, not the loading cut
