@@ -106,6 +106,8 @@ class BinnedNegativeLogLikelihoodFunction(Calculation):
         self.last_x_kj = None
     
     def calculate(self, inputs, verbose=False):
+        self.value_sigmas = cp.asarray([s.nev_param.value_sigma for s in self.signals])
+        self.value_expectations = cp.asarray([s.nev_param.value_expectation for s in self.signals])
         n_evs = inputs[:len(self.signals)]
         binned_signals = inputs[len(self.signals):-1]
         x_kj = inputs[-1]
@@ -121,7 +123,8 @@ class BinnedNegativeLogLikelihoodFunction(Calculation):
         expected = cp.sum(cp.asarray([n*bin_ints for n, bin_ints in zip(n_evs, binned_signals)]), axis=0)
         expected = expected.reshape(self.counts.shape)
         mask = expected != 0
-        res = cp.sum(n_evs) - cp.sum(self.counts[mask]*cp.log(expected[mask]))
+        res = cp.sum(n_evs) - cp.sum(self.counts[mask]*cp.log(expected[mask])) +\
+            0.5*cp.sum(cp.square(cp.asarray(list(n_evs))-self.value_expectations).T*1/(cp.square(self.value_sigmas)))
         if verbose:
             print('NLL:', res)
         if np.isnan(res):
