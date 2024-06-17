@@ -18,6 +18,7 @@
 from .calculate import Calculation
 
 import numpy as np
+import os
 try:
     import uproot4
 except Exception:
@@ -76,21 +77,74 @@ class HDF5Data(DataLoader):
             return np.asarray(data)[:, :self.max_events].T
         else:
             return np.asarray(data).T
-            
+
+
+class UniformHDF5Data(DataLoader):
+    '''
+    Same as HDF5Loader but will load data uniformly from the supplied
+    filenames.
+    TODO This should be rewritten without relying on VDS's. They are not
+    really necessary for this kind of thing.
+    '''
+
+    def __init__(self, name, filenames, datasets, max_events=None):
+        self.rng = np.random.default_rng()
+        super().__init__(name)
+        self.filenames = filenames
+        self.datasets = datasets
+        self.max_events = max_events
+
+    def __call__(self):
+        print('Loading:', ', '.join(self.filenames))
+        data = [[] for ds in self.datasets]
+        vsources = {dset: [] for dset in self.datasets}
+        for fname in self.filenames:
+            with h5py.File(fname, 'r') as f:
+                for dset in self.datasets:
+                    vsources[dset].append(h5py.VirtualSource(f[dset]))
+        sizes = []
+        for vsource in vsources[self.datasets[0]]:
+            sizes.append(vsource.shape[0])
+
+        with h5py.File('/tmp/vds.h5', 'w') as vfile:
+            for dset in self.datasets:
+                vlayout = h5py.VirtualLayout(shape=(np.sum(sizes), ),
+                                             dtype=float)
+                last_size = 0
+                for size, vsource in zip(sizes, vsources[dset]):
+                    vlayout[last_size:last_size+size] = vsource
+                    last_size += size
+                vfile.create_virtual_dataset(dset, vlayout)
+            indices = np.arange(0, np.sum(sizes))
+            if self.max_events is None or self.max_events > len(indices):
+                select_indices = indices
+            else:
+                select_indices = self.rng.choice(indices, self.max_events,
+                                                 shuffle=False, replace=False)
+                select_indices = np.sort(select_indices)
+            for j, dset in enumerate(self.datasets):
+                data[j].extend(vfile[dset][()][select_indices])
+        os.remove('/tmp/vds.h5')
+        if self.max_events is not None:
+            return np.asarray(data)[:, :self.max_events].T
+        else:
+            return np.asarray(data).T
+
 
 class BinnedHDF5Data(DataLoader):
     '''
     Assumes data is pre-binned store in a dataset named 'binned'
     '''
 
-    def __init__(self, name, filename):
+    def __init__(self, name, filename, key=None):
         super().__init__(name)
         self.filename = filename
+        self.key = (key if key is not None else 'binned')
     
     def __call__(self):
-        print('Loading:', ', '.join(self.filename))
+        print(self.filename)
         with h5py.File(self.filename, 'r') as hf:
-            return hf['binned'][:]
+            return hf[self.key][:]
         
 class NPYData(DataLoader):
     '''
