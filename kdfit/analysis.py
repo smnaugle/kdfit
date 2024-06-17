@@ -106,19 +106,30 @@ class Analysis:
             print('Result: ', outputs[0])
         return outputs[0]
         
-    def minimize(self, verbose=False, show_steps=False, solver='standard', **kwargs):
+    def minimize(self, verbose=False, show_steps=False, solver='standard',
+                 method=None, **kwargs):
         '''
         Will optimize the floated parameters in the current log likelihood
         calculation to minimize the log likelihood.
-        
-        Keyword arguments are passed to scipy.optimize.minimize
+
+        solver can be 'standard' or 'dual_annealing'. If solver is standard,
+        the method for minimization can be set using the method argument.
+
+        If solver is standard, keyword arguments are passed to
+        scipy.optimize.minimize as options. If solver is dual_annealing
+        the keyword arguments are passed directy to the method.
         '''
         initial = [g if (g:=p.value) is not None else 1.0 for p in self._floated]
         bounds = [b if (b:=p.constraints) is not None else [-np.inf, np.inf] for p in self._floated]
-        if solver=='standard':
-            minimum = opt.minimize(partial(self, show_steps=show_steps, verbose=verbose), x0=initial, bounds=bounds, options={**kwargs})
+        if solver == 'standard':
+            # Only pass bounds if they are meaningful
+            # Passing bounds even if they are None breaks certain fitters
+            if np.all(np.abs(bounds) == np.inf):
+                minimum = opt.minimize(partial(self, show_steps=show_steps, verbose=verbose), x0=initial, method=method, options={**kwargs})
+            else:
+                minimum = opt.minimize(partial(self, show_steps=show_steps, verbose=verbose), x0=initial, bounds=bounds, method=method, options={**kwargs})
         elif solver=='dual_annealing':
-            minimum = opt.dual_annealing(partial(self, show_steps=show_steps, verbose=verbose), bounds=bounds, **kwargs)
+            minimum = opt.dual_annealing(partial(self, show_steps=show_steps, verbose=verbose), x0=initial, bounds=bounds, **kwargs)
         else:
             raise Exception('Method not implemented...')
         minimum.params = {p: v for p, v in zip(self._floated, minimum.x)}
@@ -219,7 +230,7 @@ class Analysis:
         minimum.lower = lower
         return minimum
 
-    def posterior_probability(self, minimum, post_param, margs={}, interval=None, ndx=20):
+    def posterior_probability(self, minimum, post_param, margs={}, interval=None, ndx=20, verbose=False):
         '''
         Will profile the current likelihood to map the unnormalized posterior probability.
         post_param is the parameter for which the posterior probability will be mapped.
@@ -247,9 +258,13 @@ class Analysis:
             self.update_likelihood()
             vals = np.linspace(interval[0], interval[1], ndx)
             likelihoods = []
-            for val in vals:
+            for val_i, val in enumerate(vals):
                 # Get the delta nll value for this value of the posterior param
-                nll = self._delta_nll_profile(minimum, p, x=val, margs=margs, ci_delta=0)
+                if verbose:
+                    print('One step %i' % val_i)
+                p.value = val
+                val_min = self.minimize(**margs)
+                nll = val_min.fun - minimum.fun
                 likelihoods.append(np.exp(-nll))
             p.fixed = False
             p.value = v
