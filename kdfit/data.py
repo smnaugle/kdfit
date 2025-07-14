@@ -83,52 +83,44 @@ class UniformHDF5Data(DataLoader):
     '''
     Same as HDF5Loader but will load data uniformly from the supplied
     filenames.
-    TODO This should be rewritten without relying on VDS's. They are not
-    really necessary for this kind of thing.
     '''
 
-    def __init__(self, name, filenames, datasets, max_events=None):
+    def __init__(self, name, filenames, datasets, max_events=None, fraction=None):
         self.rng = np.random.default_rng()
         super().__init__(name)
         self.filenames = filenames
         self.datasets = datasets
         self.max_events = max_events
+        self.fraction = fraction
+        if self.fraction is not None and self.max_events is not None:
+            raise ValueError('Cannot specify both fraction and max_events')
 
     def __call__(self):
         print('Loading:', ', '.join(self.filenames))
         data = [[] for ds in self.datasets]
         vsources = {dset: [] for dset in self.datasets}
+        file_lengths = []
         for fname in self.filenames:
             with h5py.File(fname, 'r') as f:
-                for dset in self.datasets:
-                    vsources[dset].append(h5py.VirtualSource(f[dset]))
-        sizes = []
-        for vsource in vsources[self.datasets[0]]:
-            sizes.append(vsource.shape[0])
-
-        with h5py.File('/tmp/vds.h5', 'w') as vfile:
-            for dset in self.datasets:
-                vlayout = h5py.VirtualLayout(shape=(np.sum(sizes), ),
-                                             dtype=float)
-                last_size = 0
-                for size, vsource in zip(sizes, vsources[dset]):
-                    vlayout[last_size:last_size+size] = vsource
-                    last_size += size
-                vfile.create_virtual_dataset(dset, vlayout)
-            indices = np.arange(0, np.sum(sizes))
-            if self.max_events is None or self.max_events > len(indices):
-                select_indices = indices
-            else:
-                select_indices = self.rng.choice(indices, self.max_events,
-                                                 shuffle=False, replace=False)
-                select_indices = np.sort(select_indices)
-            for j, dset in enumerate(self.datasets):
-                data[j].extend(vfile[dset][()][select_indices])
-        os.remove('/tmp/vds.h5')
-        if self.max_events is not None:
-            return np.asarray(data)[:, :self.max_events].T
+                file_lengths.append(len(f[self.datasets[0]]))
+        total_events = np.sum(file_lengths)
+        file_ends = np.concat([[0],np.cumsum(file_lengths) - 1])  # Subtract one for 0-indexing
+        indices = np.arange(0, total_events)
+        if (self.max_events is None and self.fraction is None) or\
+            (self.max_events is not None and self.max_events > len(indices)):
+            select_indices = indices
         else:
-            return np.asarray(data).T
+            num_to_load = int(self.fraction * total_events) if self.fraction is not None else self.max_events
+            select_indices = self.rng.choice(indices, num_to_load,
+                                             shuffle=False, replace=False)
+            select_indices = np.sort(select_indices)
+        for fi, fname in enumerate(self.filenames):
+            with h5py.File(fname, 'r') as f:
+                load_ids = select_indices[(select_indices >= file_ends[fi]) & (select_indices < file_ends[fi+1])]
+                load_ids = load_ids - file_ends[fi]
+                for j, dset in enumerate(self.datasets):
+                    data[j].extend(f[dset][()][load_ids])
+        return np.asarray(data).T
 
 
 class BinnedHDF5Data(DataLoader):

@@ -107,7 +107,7 @@ class Analysis:
         return outputs[0]
         
     def minimize(self, verbose=False, show_steps=False, solver='standard',
-                 method=None, **kwargs):
+                 method=None, jac=None, **kwargs):
         '''
         Will optimize the floated parameters in the current log likelihood
         calculation to minimize the log likelihood.
@@ -125,9 +125,9 @@ class Analysis:
             # Only pass bounds if they are meaningful
             # Passing bounds even if they are None breaks certain fitters
             if np.all(np.abs(bounds) == np.inf):
-                minimum = opt.minimize(partial(self, show_steps=show_steps, verbose=verbose), x0=initial, method=method, options={**kwargs})
+                minimum = opt.minimize(partial(self, show_steps=show_steps, verbose=verbose), x0=initial, method=method, jac=jac, options={**kwargs})
             else:
-                minimum = opt.minimize(partial(self, show_steps=show_steps, verbose=verbose), x0=initial, bounds=bounds, method=method, options={**kwargs})
+                minimum = opt.minimize(partial(self, show_steps=show_steps, verbose=verbose), x0=initial, bounds=bounds, jac=jac, method=method, options={**kwargs})
         elif solver=='dual_annealing':
             minimum = opt.dual_annealing(partial(self, show_steps=show_steps, verbose=verbose), x0=initial, bounds=bounds, **kwargs)
         else:

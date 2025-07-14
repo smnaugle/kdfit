@@ -648,17 +648,60 @@ class BinnedPDF(Signal):
         '''
         return self.w_i
         
-    def _conv_syst(self, inputs, t_ij=None):
+    def _conv_syst(self, inputs, t_ij=None, w_i = None):
         '''
         Convolves the bandwidths with the resolutions scaled by the scale
         systematics. Resolutions are in the units of the scaled dimension.
         '''
+
+        def gauss(x, s, m):
+            x = cp.asarray(x)
+            gaus = 1/(s*cp.sqrt(2*cp.pi))*cp.exp(-0.5*((x-m)/s)**2)
+            gaus[gaus<1e-10] = 0
+            return gaus
+
         if t_ij is None:
             t_ij = self.t_ij
+        if w_i is None:
+            w_i = self.w_i
         scales = inputs[0:3*len(self.observables.scales):3]
         resolutions = inputs[2:3*len(self.observables.shifts):3]
         resolutions = resolutions*scales
-        return cp.random.normal(t_ij, resolutions)
+        counts = self.bin_mc(t_ij, w_i)
+        if np.all(resolutions == 0):
+            return counts
+        assert len(self.binning) == 1, 'Multidimension convolution is not supported yet.'
+        # FIXME: This should probably bin the MC very finely, convolve, then rescale to the actual binning
+        for dim in range(len(self.binning)):
+            bin_spacing = self.binning[dim][1]-self.binning[dim][0]
+            fine_bin_spacing = bin_spacing
+            rebins = 0
+            while fine_bin_spacing > resolutions/2:
+                fine_bin_spacing  = fine_bin_spacing/2
+                rebins+=1
+            # TODO: Bin all the MC and just figure out how to get back to normal bin spacing
+            low = self.binning[dim][0] - bin_spacing*5
+            high = self.binning[dim][-1] + bin_spacing*5
+            wide_bins = np.linspace(low, high, round((high-low)/fine_bin_spacing))
+            counts, _ = np.histogram(t_ij, bins=wide_bins, density=True)
+            # print('pre counts', counts)
+            gauss_bins = wide_bins - np.mean(wide_bins)
+            conv = gauss(gauss_bins, resolutions[dim], 0)
+            counts = np.convolve(counts.get(), conv.get(), mode='same')
+            # print(rebins)
+            rebin_counts = []
+            for i in range(int(len(counts)/2**(rebins))):
+                rebin_counts.append(np.sum(counts[2**(rebins)*i:2**(rebins)*(i+1)]))
+            counts = cp.asarray(rebin_counts)
+            # print('conv counts', *conv)
+            # print('post_counts', *counts)
+            # print(len(self.counts))
+            # print(len(counts))
+            counts = counts[5:-5]
+            counts - cp.asarray(counts)
+            # print(len(counts))
+            assert len(counts) == len(self.counts)
+        return (counts.flatten()/self.bin_vol/cp.sum(counts)).reshape(counts.shape)
         
     def calculate(self, inputs, verbose=False):
         '''
@@ -671,5 +714,5 @@ class BinnedPDF(Signal):
         systs = cp.asarray(inputs[1:], dtype=cp.float64)
         w_i = self._weight_syst(systs)
         t_ij = self._transform_syst(systs)
-        t_ij = self._conv_syst(systs, t_ij=t_ij)
-        return self.bin_mc(self.t_ij, self.w_i)
+        counts = self._conv_syst(systs, t_ij=t_ij, w_i=w_i)
+        return counts

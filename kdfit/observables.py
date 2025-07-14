@@ -63,7 +63,7 @@ class Observables(Calculation):
         self.resolutions.append(resolution)
         return scale, shift, resolution
         
-    def add_signal(self, name, *args, pdf=KernelDensityPDF, **kwargs):
+    def add_signal(self, name, *args, pdf=KernelDensityPDF, **kwargs) -> Signal:
         if name in self.signals:
             raise Exception('Duplicate name: '+name)
         sig = pdf(name, self, *args, **kwargs)
