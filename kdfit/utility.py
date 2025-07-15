@@ -59,7 +59,7 @@ class PDFBinner(Calculation):
         from .signal import BinnedPDF
         super().__init__(name, [pdf])
         self.pdf = pdf
-        if isinstance(pdf, BinnedPDF) and pdf.binning == binning:
+        if isinstance(pdf, BinnedPDF) and (np.asarray( pdf.binning ) == np.asarray(binning)).all():
             self.binned_correctly = True
         else:
             self.binned_correctly = False
