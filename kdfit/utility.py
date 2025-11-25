@@ -59,8 +59,10 @@ class PDFBinner(Calculation):
         from .signal import BinnedPDF
         super().__init__(name, [pdf])
         self.pdf = pdf
-        if isinstance(pdf, BinnedPDF) and (np.asarray( pdf.binning ) == np.asarray(binning)).all():
-            self.binned_correctly = True
+        self.binned_correctly = True
+        if isinstance(pdf, BinnedPDF):
+            for dim_i in range(len(pdf.binning)):
+                self.binned_correctly = self.binned_correctly & np.array_equal(pdf.binning[dim_i], binning[dim_i])
         else:
             self.binned_correctly = False
             self.bin_edges = binning_to_edges(binning)
