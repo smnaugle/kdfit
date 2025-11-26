@@ -124,6 +124,7 @@ class Analysis:
         if solver == 'standard':
             # Only pass bounds if they are meaningful
             # Passing bounds even if they are None breaks certain fitters
+            print(method)
             if np.all(np.abs(bounds) == np.inf):
                 minimum = opt.minimize(partial(self, show_steps=show_steps, verbose=verbose), x0=initial, method=method, jac=jac, options={**kwargs})
             else:
@@ -135,15 +136,15 @@ class Analysis:
         minimum.params = {p: v for p, v in zip(self._floated, minimum.x)}
         return minimum
         
-    def _delta_nll_profile(self, m, p, x, ci_delta=0.5, margs={}):
+    def _delta_nll_profile(self, m, p, x, ci_delta=0.5, **kwargs):
         p.value = x
-        return self.minimize(**margs).fun - m.fun - ci_delta
+        return self.minimize(**kwargs).fun - m.fun - ci_delta
 
     def _delta_nll_scan(self, m, p, x, ci_delta=0.5):
         p.value = x
         return self() - m.fun - ci_delta
 
-    def confidence_intervals(self, minimum, method='scan', ci_delta=0.5, params=None, margs={}):
+    def confidence_intervals(self, minimum, scan='scan', ci_delta=0.5, params=None, **kwargs):
         '''
         Will either scan or profile the current likelihood to find the positive
         and negative confidence intervals for minimized parameters about the
@@ -165,18 +166,11 @@ class Analysis:
                 p.fixed = False
             # compute confidence intervals for each parameter
             for p, v in params.items():
-                #first check if it is a parameter at a boundary, if so skip it
-                # FIXME: This if should rather mention that the interval will be calculated using a 0 prior for negative values
-                #if np.any(v == p.constraints):
-                #    print('Skipping %s since it is at a boundary'%p.name)
-                #    upper[p]=np.nan
-                #    lower[p]=np.nan
-                #    continue
                 p.fixed = True
                 self.update_likelihood()
-                if method == 'profile':
-                    dnll = partial(self._delta_nll_profile, minimum, p, margs=margs, ci_delta=ci_delta)
-                elif method == 'scan':
+                if scan == 'profile':
+                    dnll = partial(self._delta_nll_profile, minimum, p, ci_delta=ci_delta, **kwargs)
+                elif scan == 'scan':
                     dnll = partial(self._delta_nll_scan, minimum, p, ci_delta=ci_delta)
                 else:
                     raise Exception('Unknown confidence interval method')
@@ -188,34 +182,27 @@ class Analysis:
                 # Add in different step factors for systematics
                 # TODO: perhaps there is a more intelligent way to handle nonnegative parameters
                 # FIXME: We should use the *= part of the step factor loop rather than manually setting step sizes
-                pos_only=False
-                if 'resolution' in p.name or 'scale' in p.name or 'shift' in p.name:
-                    step_factor = 0.1
-                    if 'resolution' in p.name or 'scale' in p.name:
-                        pos_only = True
-                # Set step factors for _nev parameters
-                elif '_nev' in p.name:
-                    step_factor = 0.5
-                    if p.constraints[0]==0:
-                        pos_only = True
+                if v==0:
+                    step_distance = 0.1
                 else:
-                    print('No custom settings for param %s' % p.name)
-                    print('Defaulting to standard parameter settings.')
-                    step_factor = 0.5
-                    pos_only = False
+                    step_distance = np.min([np.sqrt(np.abs(v)), np.abs(v)])
                 while True:
                     try:
-                        step = np.abs(v)*step_factor if v!=0 else step_factor
-                        if v-step<0 and pos_only:
-                            print('Negative lower bound for positive only parameter, setting to nan')
+                        step = step_distance
+                        if v-step<p.constraints[0]:
+                            print('Trying to step value out of bound, setting to nan')
                             lo=np.nan
                         else:
                             lo = opt.brentq(dnll, v-step, v, xtol=0.01, rtol=0.00001)
-                        hi = opt.brentq(dnll, v, v+step, xtol=0.01, rtol=0.00001)
+                        if v+step>p.constraints[1]:
+                            print('Trying to step value out of bound, setting to nan')
+                            hi=np.nan
+                        else:
+                            hi = opt.brentq(dnll, v, v+step, xtol=0.01, rtol=0.00001)
                         break
                     except ValueError:
                         print('ValueError for %s retrying...'%p.name)
-                        step_factor *= 2
+                        step_distance*= 2
                 upper[p] = hi-v
                 lower[p] = v-lo
                 p.fixed = False
@@ -230,7 +217,7 @@ class Analysis:
         minimum.lower = lower
         return minimum
 
-    def posterior_probability(self, minimum, post_param, margs={}, interval=None, ndx=20, verbose=False):
+    def posterior_probability(self, minimum, post_param, log=True, interval=None, ndx=20, verbose=False, **kwargs):
         '''
         Will profile the current likelihood to map the unnormalized posterior probability.
         post_param is the parameter for which the posterior probability will be mapped.
@@ -240,7 +227,7 @@ class Analysis:
         if interval is None:
             # If no confidence interval is provided, calculate it up to 5 sigma
             post_min = minimum
-            post_min = self.confidence_intervals(post_min, method='profile', ci_delta=2.5, params=[post_param])
+            post_min = self.confidence_intervals(post_min, scan='profile', ci_delta=2.5, params=[post_param])
             lo, hi = [post_min.lower[post_param], post_min.upper[post_param]]
             if np.isnan(post_min.lower[post_param]):
                 lo = post_param.constraints[0]
@@ -263,9 +250,12 @@ class Analysis:
                 if verbose:
                     print('One step %i' % val_i)
                 p.value = val
-                val_min = self.minimize(**margs)
+                val_min = self.minimize(**kwargs)
                 nll = val_min.fun - minimum.fun
-                likelihoods.append(np.exp(-nll))
+                if log:
+                    likelihoods.append(np.exp(-nll))
+                else:
+                    likelihoods.append(nll)
             p.fixed = False
             p.value = v
         finally:
