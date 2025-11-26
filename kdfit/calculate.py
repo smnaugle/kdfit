@@ -15,49 +15,53 @@
 #  You should have received a copy of the GNU General Public License
 #  along with kdfit.  If not, see <https://www.gnu.org/licenses/>.
 
-import numpy as np
 from collections import deque
 
+import numpy as np
+
+
 class Calculation:
-    '''Represents stage of a calculation'''
-        
+    """Represents stage of a calculation"""
+
     def __init__(self, name, parents, constant=False):
-        '''
+        """
         parents should be a list of Calculation objects this calculation depends on
         constant sets the assumption that calculate(...) is always valid and
         never changes (no parents, but not an input)
-        '''
+        """
         self.name = name
         self.parents = parents
         self.constant = constant
-        
+
     def calculate(self, inputs):
-        '''
+        """
         inputs is a list of parent results in the order of self.parents
-        '''
+        """
         pass
-    
+
     def __str__(self):
         return self.name
-    
+
     def __repr__(self):
         return self.name
 
 class Parameter(Calculation):
-    '''
+    """
     Represents an input to a System
-    
+
     value is the initial or fixed value of the Parameter
     constant sets whether the parameter is fixed (True) or floated (False)
-    '''
+    """
 
-    def __init__(self, name, value=None, fixed=True, constraints=None, value_sigma=np.inf, value_expectation=0):
-        #def __init__(self, name, value=None, fixed=True):
+    def __init__(
+        self, name, value=None, fixed=True, constraints=tuple([-np.inf, np.inf]), value_sigma=np.inf, value_expectation=0
+    ):
+        # def __init__(self, name, value=None, fixed=True):
         super().__init__(name, [], constant=False)
         self.name = name
         self.value = value
         self.fixed = fixed
-        self.constraints = constraints
+        self.constraints = list(constraints)
         self.value_sigma = value_sigma
         self.value_expectation = value_expectation
 
@@ -67,29 +71,30 @@ class Parameter(Calculation):
         else:
             self.parents = [param]
             self.constant = False
-            
+
     def calculate(self, inputs, verbose=False):
         if len(self.parents) == 1:
             return inputs[0]
         raise Exception('Should not calculate unlinked parameters')
 
+
 class System:
-    '''
+    """
     Represents a series of calculations as a a collection of connected dependencies
-    '''
-    
+    """
+
     def __init__(self, outputs=[], verbose=False):
-        '''
+        """
         output is a list of output Calculations (order used for result of calculate)
-        '''
-        
+        """
+
         self.outputs = outputs  # output structures
-        
+
         parts = []  # sequentially stores all calcualtions in network
         children_indexes = []  # indexes of child instances in parts for each instance in parts
         parents_indexes = []  # indexes of parent instances in parts for each instance in parts
         input_indexes = []  # indexes of head (potential input) instances
-        
+
         stack = deque()
         for child in self.outputs:  # iterate over outputs to walk up tree
             if child not in parts:
@@ -114,9 +119,9 @@ class System:
                 parents_indexes.append([])
             else:
                 index = parts.index(parent)
-                #This prevents the same Calculation from appearing multiple
-                #times in the input list, but is necessary to avoid double
-                #counting if the tree is not trivial
+                # This prevents the same Calculation from appearing multiple
+                # times in the input list, but is necessary to avoid double
+                # counting if the tree is not trivial
                 if child_index in children_indexes[index]:
                     continue  # already mapped this branch
             if verbose:
@@ -126,21 +131,23 @@ class System:
             if parent.parents is not None:
                 for grandparent in parent.parents:
                     stack.append((index, parent, grandparent))
-                
+
         self.parts = np.asarray(parts, dtype=object)
-        self.output_indexes = np.asarray([parts.index(output) for output in self.outputs], dtype=np.int32)  # indexes of output instances
+        self.output_indexes = np.asarray(
+            [parts.index(output) for output in self.outputs], dtype=np.int32
+        )  # indexes of output instances
         self.input_indexes = np.asarray(input_indexes, dtype=np.int32)
         self.children_indexes = [np.asarray(child_indexes, dtype=np.int32) for child_indexes in children_indexes]
         self.parents_indexes = [np.asarray(parent_indexes, dtype=np.int32) for parent_indexes in parents_indexes]
-        
+
         self.state = np.asarray([None for p in self.parts], dtype=object)
         self.not_evaluated = np.ones_like(self.parts, dtype=bool)
-        
+
     def classify_inputs(self):
-        '''
+        """
         Sets all unlinked non-fixed Parameters to floated inputs,  and unlinked Calculations to fixed inputs. Returns a
         list of both types.
-        '''
+        """
         floated = []
         fixed = []
         floated_indexes = []
@@ -163,16 +170,19 @@ class System:
         self.fixed_indexes = np.asarray(fixed_indexes, dtype=np.int32)
         self.constant_indexes = np.asarray(constant_indexes, dtype=np.int32)
         return floated, fixed
-    
+
     # FIXME Perhaps System should be agnostic to floated and fixed Parameters,
     # and instead require all Parameters as input, making Analysis distinguish
     # between floated and fixed, building a parameter list for both.
-    
+
     def calculate(self, floated, verbose=False):
         if type(verbose) is bool:
             verbose = 1 if verbose else 0
         recompute = []
-        for indexes, values in [(self.floated_indexes, floated), (self.fixed_indexes, [p.value for p in self.parts[self.fixed_indexes]])]:
+        for indexes, values in [
+            (self.floated_indexes, floated),
+            (self.fixed_indexes, [p.value for p in self.parts[self.fixed_indexes]]),
+        ]:
             for index, value in zip(indexes, values):
                 if self.state[index] is not value:
                     if verbose > 1:
@@ -180,11 +190,13 @@ class System:
                     self.not_evaluated[index] = False
                     self.state[index] = value
                     recompute.extend(self.children_indexes[index])
-        recompute.extend([constant_index for constant_index in self.constant_indexes if self.state[constant_index] is None])
+        recompute.extend(
+            [constant_index for constant_index in self.constant_indexes if self.state[constant_index] is None]
+        )
         recompute = np.unique(np.asarray(recompute, dtype=np.uint32))
         if verbose > 2:
             print('Top-level recompute:', self.parts[recompute])
-        
+
         not_queued = np.ones_like(self.parts, dtype=bool)
         not_queued[recompute] = False
         invalidate_queue = deque(recompute)
@@ -199,7 +211,7 @@ class System:
                 children = children[not_queued[children]]
                 not_queued[children] = False
                 invalidate_queue.extend(children)
-        
+
         not_queued = np.ones_like(self.parts, dtype=bool)
         not_queued[recompute] = False
         recompute_queue = deque(recompute)
@@ -209,8 +221,12 @@ class System:
             parents = self.parents_indexes[index]
             inputs_not_evaluated = self.not_evaluated[parents]
             if verbose > 2:
-                print('Testing', self.parts[index], 'parents:',
-                      ', '.join(['%s:%s'%(self.parts[i], self.not_evaluated[i]) for i in parents]))
+                print(
+                    'Testing',
+                    self.parts[index],
+                    'parents:',
+                    ', '.join(['%s:%s' % (self.parts[i], self.not_evaluated[i]) for i in parents]),
+                )
             if np.any(inputs_not_evaluated):
                 continue  # TODO not ready yet
             if verbose:
