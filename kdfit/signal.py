@@ -693,7 +693,7 @@ class BinnedPDF(Signal):
                     break
             low = self.binning[dim][0] - bin_spacing*self._CONV_BUFFER_BINS
             high = self.binning[dim][-1] + bin_spacing*self._CONV_BUFFER_BINS
-            wide_bins = np.linspace(low, high, (len(self.binning[dim])+(self._CONV_BUFFER_BINS-1))*2**rebins)
+            wide_bins = np.linspace(low, high, (len(self.binning[dim])+(2*self._CONV_BUFFER_BINS-1))*2**rebins)
             smeared_counts, _ = np.histogram(t_ij[:,dim][mask], bins=wide_bins)
             gauss_bins = wide_bins - np.mean(wide_bins)
             conv = gauss(gauss_bins, resolutions[dim], 0)
