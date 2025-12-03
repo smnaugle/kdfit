@@ -564,7 +564,16 @@ class BinnedPDF(Signal):
         self.a_kj, self.b_kj = edges_to_points(self.bin_edges)
         self.bin_centers = [(edges[:-1]+edges[1:])/2 for edges in self.bin_edges]
         self.bin_vol = cp.prod(self.b_kj-self.a_kj, axis=1)
+
         self.last_resolutions = None
+        self.last_shifts = None
+        self.last_scales = None
+        self.last_counts = None
+
+        self._CONV_BUFFER_BINS = 5
+        self._CONV_BIN_RATIO = 8
+        self._CONV_MAX_REBINS = 10
+
         super().__init__(name, observables, [self.mc_param]+self.systematics, value=value)
         
     def bin_mc(self, t_ij, w_i):
@@ -665,62 +674,74 @@ class BinnedPDF(Signal):
         if w_i is None:
             w_i = self.w_i
         scales = inputs[0:3*len(self.observables.scales):3]
+        shifts = inputs[1:3*len(self.observables.scales):3]
         resolutions = inputs[2:3*len(self.observables.resolutions):3]
-        # resolutions = resolutions*scales
+
+        def get_smeared_counts(dim, mask=None):
+            if mask is None:
+                mask = np.ones(t_ij[:,dim].shape, dtype=bool)
+            bin_spacing = np.diff(self.binning[dim])[0]
+            if not all(np.isclose(bin_spacing, np.diff(self.binning[dim]))):
+                raise RuntimeError("Convolution not supported for non-uniform bins")
+            fine_bin_spacing = bin_spacing
+            rebins = 0
+            while fine_bin_spacing > resolutions[dim]/self._CONV_BIN_RATIO:
+                fine_bin_spacing = fine_bin_spacing/2
+                rebins+=1
+                if rebins > self._CONV_MAX_REBINS:
+                    print(f"Cannot rebin sufficiently for resolution {resolutions[dim]}")
+                    break
+            low = self.binning[dim][0] - bin_spacing*self._CONV_BUFFER_BINS
+            high = self.binning[dim][-1] + bin_spacing*self._CONV_BUFFER_BINS
+            wide_bins = np.linspace(low, high, (len(self.binning[dim])+(self._CONV_BUFFER_BINS-1))*2**rebins)
+            smeared_counts, _ = np.histogram(t_ij[:,dim][mask], bins=wide_bins)
+            gauss_bins = wide_bins - np.mean(wide_bins)
+            conv = gauss(gauss_bins, resolutions[dim], 0)
+            smeared_counts = cp.convolve(smeared_counts, conv, mode='same')
+            rebin_counts = []
+            for i in range(int(len(smeared_counts)/2**(rebins))):
+                rebin_counts.append(cp.sum(smeared_counts[2**(rebins)*i:2**(rebins)*(i+1)]))
+            smeared_counts = cp.asarray(rebin_counts)
+            smeared_counts = smeared_counts[self._CONV_BUFFER_BINS:-self._CONV_BUFFER_BINS]
+            if np.sum(smeared_counts!=0):
+                smeared_counts = smeared_counts/(bin_spacing*np.sum(smeared_counts))
+            return smeared_counts
 
         counts = self.bin_mc(t_ij, w_i)
         if np.all(resolutions == 0):
             return counts
+        # NOTE: I have convinced myself that if we change one systematic in one dimension, we must recalculate the smears for all dimensions.
+        if np.all((self.last_resolutions == resolutions) & (self.last_shifts == shifts) & (self.last_scales == scales)):
+            #NOTE: We are safe to return last counts here because this will only ever be true after calculating at least once
+            assert self.last_counts is not None
+            return self.last_counts
         for dim in range(len(self.binning)):
-            if resolutions[dim] == 0 or (self.last_resolutions is not None and resolutions[dim] == self.last_resolutions[dim]):
+            if resolutions[dim] == 0:
                 continue
             ldims = [dim_id for dim_id in range(len(self.binning))]
             ldims.pop(dim)
             binning = self.binning.copy()
             binning.pop(dim)
             pts = np.meshgrid(*binning)
-            for idx in np.ndindex(tuple(np.asarray(pts[0].shape)-1)):
-                coords_lo = tuple([pt[idx] for pt in pts])
-                coords_hi = tuple([pt[tuple(np.asarray(idx)+1)] for pt in pts])
-                mask = cp.ones(t_ij[:,dim].shape, dtype=bool)
-                for ldim in ldims:
-                    if ldim>= dim:
-                        idim = ldim-1
-                    else:
-                        idim = ldim
-                    mask = mask & (t_ij[:,ldim] >= coords_lo[idim]) & (t_ij[:,ldim] <= coords_hi[idim])
+            if len(binning)!=0:
+                for idx in np.ndindex(tuple(np.asarray(pts[0].shape)-1)):
+                    coords_lo = tuple([pt[idx] for pt in pts])
+                    coords_hi = tuple([pt[tuple(np.asarray(idx)+1)] for pt in pts])
+                    mask = cp.ones(t_ij[:,dim].shape, dtype=bool)
+                    for ldim in ldims:
+                        if ldim>= dim:
+                            idim = ldim-1
+                        else:
+                            idim = ldim
+                        mask = mask & (t_ij[:,ldim] >= coords_lo[idim]) & (t_ij[:,ldim] <= coords_hi[idim])
+                    smeared_counts = get_smeared_counts(dim, mask)
+                    bin_spacing = np.diff(self.binning[dim])[0]
+                    counts[(*idx[:dim], slice(0,None), *idx[dim:])] = \
+                                    smeared_counts * bin_spacing*np.sum(self.counts[(*idx[:dim], slice(0,None), *idx[dim:])])
+            else:
+                dim=0
+                counts = get_smeared_counts(dim, mask)
                 bin_spacing = np.diff(self.binning[dim])[0]
-                assert all(np.isclose(bin_spacing, np.diff(self.binning[dim]))), "Convolution not supported for non-uniform bins"
-                fine_bin_spacing = bin_spacing
-                rebins = 0
-                while fine_bin_spacing > resolutions[dim]/2:
-                    fine_bin_spacing = fine_bin_spacing/2
-                    rebins+=1
-                # TODO: Bin all the MC and just figure out how to get back to normal bin spacing
-                low = self.binning[dim][0] - bin_spacing*5
-                high = self.binning[dim][-1] + bin_spacing*5
-                wide_bins = np.linspace(low, high, (len(self.binning[dim])+9)*2**rebins)
-                smeared_counts, _ = np.histogram(t_ij[:,dim][mask], bins=wide_bins)
-                gauss_bins = wide_bins - np.mean(wide_bins)
-                conv = gauss(gauss_bins, resolutions[dim], 0)
-                smeared_counts = np.convolve(smeared_counts.get(), conv.get(), mode='same')
-                # print(rebins)
-                rebin_counts = []
-                for i in range(int(len(smeared_counts)/2**(rebins))):
-                    rebin_counts.append(np.sum(smeared_counts[2**(rebins)*i:2**(rebins)*(i+1)]))
-                smeared_counts = cp.asarray(rebin_counts)
-                # print('conv counts', *conv)
-                # print('post_counts', *counts)
-                # print(len(self.counts))
-                # print(len(counts))
-                smeared_counts = smeared_counts[5:-5]
-                if np.sum(smeared_counts!=0):
-                    smeared_counts = smeared_counts/(bin_spacing*np.sum(smeared_counts))
-                counts[(*idx[:dim], slice(0,None), *idx[dim:])] = \
-                                smeared_counts * bin_spacing*np.sum(self.counts[(*idx[:dim], slice(0,None), *idx[dim:])])
-                # print(len(counts))
-        # assert counts.shape == self.counts.shape
-        self.last_resolutions = resolutions
         return (counts.flatten()/self.bin_vol/cp.sum(counts)).reshape(counts.shape)
         
     def calculate(self, inputs, verbose=False):
@@ -735,4 +756,8 @@ class BinnedPDF(Signal):
         w_i = self._weight_syst(systs)
         t_ij = self._transform_syst(systs)
         counts = self._conv_syst(systs, t_ij=t_ij, w_i=w_i)
+        self.last_scales = systs[0:3*len(self.observables.scales):3]
+        self.last_shifts = systs[1:3*len(self.observables.scales):3]
+        self.last_resolutions = systs[2:3*len(self.observables.resolutions):3]
+        self.last_counts = counts
         return counts
