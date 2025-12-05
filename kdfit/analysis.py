@@ -23,25 +23,26 @@ import scipy.optimize as opt
 from .calculate import Parameter, System
 from .observables import Observables
 from .term import Sum
+from .signal import Signal
 
 
 class Analysis:
     def __init__(self):
-        self.parameters = {}
-        self.signals = {}
-        self.observables = {}
+        self.parameters: dict[str, Parameter] = {}
+        self.signals: dict[str, Signal] = {}
+        self.observables: dict[str, Observables] = {}
 
-    def add_parameter(self, name, *args, **kwargs):
+    def add_parameter(self, name, *args, **kwargs) -> Parameter:
         if name in self.parameters:
             raise Exception('Duplicate name: ' + name)
         param = Parameter(name, *args, **kwargs)
         self.parameters[name] = param
         return param
 
-    def get_parameter(self, name):
+    def get_parameter(self, name) -> Parameter:
         return self.parameters[name]
 
-    def add_observables(self, name, *args, **kwargs):
+    def add_observables(self, name, *args, **kwargs) -> Observables:
         if name in self.observables:
             raise Exception('Duplicate name: ' + name)
         obs = Observables(name, self, *args, **kwargs)
@@ -250,11 +251,11 @@ class Analysis:
             def get_limit(positive=False):
                 abs_val = np.abs(minimum.params[post_param])
                 dx = np.min([abs_val / 10, np.sqrt(abs_val) / 10])
-                if dx == 0:
-                    dx += 0.1
+                if dx < 0.05:
+                    dx += 0.05
                 dnll = 0
                 i = 1
-                max_i = 1024
+                max_i = 1e6
                 while dnll < 5:
                     if positive:
                         post_param.value = minimum.params[post_param] + dx * i
@@ -268,6 +269,7 @@ class Analysis:
                     dnll = test_min.fun - minimum.fun
                     if i > max_i:
                         print('Could not find interval with large enough dnll')
+                        print(f'{post_param.name} at {post_param.value} with dnll {dnll}')
                         break
                     i = i * 2
                 return post_param.value

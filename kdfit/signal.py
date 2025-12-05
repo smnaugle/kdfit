@@ -19,6 +19,7 @@ import numpy as np
 try:
     import cupy as cp
     from cupyx.scipy.special import erf
+    from cupyx.scipy.signal import fftconvolve
 except Exception:
     print('kdfit.signal could not import CuPy - falling back to NumPy')
     cp = np  # Use numpy to emulate cupy on CPU
@@ -571,7 +572,7 @@ class BinnedPDF(Signal):
         self.last_counts = None
 
         self._CONV_BUFFER_BINS = 5
-        self._CONV_BIN_RATIO = 8
+        self._CONV_BIN_RATIO = 2
         self._CONV_MAX_REBINS = 10
 
         super().__init__(name, observables, [self.mc_param]+self.systematics, value=value)
@@ -666,7 +667,7 @@ class BinnedPDF(Signal):
         def gauss(x, s, m):
             x = cp.asarray(x)
             gaus = 1/(s*cp.sqrt(2*cp.pi))*cp.exp(-0.5*((x-m)/s)**2)
-            gaus[gaus<1e-10] = 0
+            gaus[gaus<1e-10] = 0.0
             return gaus
 
         if t_ij is None:
@@ -677,34 +678,19 @@ class BinnedPDF(Signal):
         shifts = inputs[1:3*len(self.observables.scales):3]
         resolutions = inputs[2:3*len(self.observables.resolutions):3]
 
-        def get_smeared_counts(dim, mask=None):
+        def get_smeared_counts(dim, conv, wide_bins, mask=None):
+            smeared_counts, _ = cp.histogram(t_ij[:,dim][mask], bins=wide_bins)
             if mask is None:
-                mask = np.ones(t_ij[:,dim].shape, dtype=bool)
-            bin_spacing = np.diff(self.binning[dim])[0]
-            if not all(np.isclose(bin_spacing, np.diff(self.binning[dim]))):
-                raise RuntimeError("Convolution not supported for non-uniform bins")
-            fine_bin_spacing = bin_spacing
-            rebins = 0
-            while fine_bin_spacing > resolutions[dim]/self._CONV_BIN_RATIO:
-                fine_bin_spacing = fine_bin_spacing/2
-                rebins+=1
-                if rebins > self._CONV_MAX_REBINS:
-                    print(f"Cannot rebin sufficiently for resolution {resolutions[dim]}")
-                    break
-            low = self.binning[dim][0] - bin_spacing*self._CONV_BUFFER_BINS
-            high = self.binning[dim][-1] + bin_spacing*self._CONV_BUFFER_BINS
-            wide_bins = np.linspace(low, high, (len(self.binning[dim])+(2*self._CONV_BUFFER_BINS-1))*2**rebins)
-            smeared_counts, _ = np.histogram(t_ij[:,dim][mask], bins=wide_bins)
-            gauss_bins = wide_bins - np.mean(wide_bins)
-            conv = gauss(gauss_bins, resolutions[dim], 0)
-            smeared_counts = cp.convolve(smeared_counts, conv, mode='same')
+                mask = cp.ones(t_ij[:,dim].shape, dtype=bool)
+            smeared_counts = fftconvolve(smeared_counts, conv, mode='same')
             rebin_counts = []
             for i in range(int(len(smeared_counts)/2**(rebins))):
                 rebin_counts.append(cp.sum(smeared_counts[2**(rebins)*i:2**(rebins)*(i+1)]))
             smeared_counts = cp.asarray(rebin_counts)
             smeared_counts = smeared_counts[self._CONV_BUFFER_BINS:-self._CONV_BUFFER_BINS]
-            if np.sum(smeared_counts!=0):
-                smeared_counts = smeared_counts/(bin_spacing*np.sum(smeared_counts))
+            smeared_counts[smeared_counts < 0] = 0  # Accuracy convolution makes some negative
+            if cp.sum(smeared_counts!=0):
+                smeared_counts = smeared_counts/(bin_spacing*cp.sum(smeared_counts))
             return smeared_counts
 
         counts = self.bin_mc(t_ij, w_i)
@@ -723,6 +709,23 @@ class BinnedPDF(Signal):
             binning = self.binning.copy()
             binning.pop(dim)
             pts = np.meshgrid(*binning)
+            bin_spacing = cp.diff(self.binning[dim])[0]
+            if not all(cp.isclose(bin_spacing, cp.diff(self.binning[dim]))):
+                raise RuntimeError("Convolution not supported for non-uniform bins")
+            fine_bin_spacing = bin_spacing
+            rebins = 0
+            while fine_bin_spacing > resolutions[dim]/self._CONV_BIN_RATIO:
+                fine_bin_spacing = fine_bin_spacing/2
+                rebins+=1
+                if rebins > self._CONV_MAX_REBINS:
+                    print(f"Cannot rebin sufficiently for resolution {resolutions[dim]}")
+                    break
+            low = self.binning[dim][0] - bin_spacing*self._CONV_BUFFER_BINS
+            high = self.binning[dim][-1] + bin_spacing*self._CONV_BUFFER_BINS
+            wide_bins = cp.linspace(low, high, (len(self.binning[dim])+(2*self._CONV_BUFFER_BINS))*2**rebins)
+            gauss_xs = wide_bins[:-1] + cp.diff(wide_bins)/2
+            gauss_xs = gauss_xs - cp.mean(gauss_xs)
+            conv = gauss(gauss_xs, resolutions[dim], 0)
             if len(binning)!=0:
                 for idx in np.ndindex(tuple(np.asarray(pts[0].shape)-1)):
                     coords_lo = tuple([pt[idx] for pt in pts])
@@ -734,14 +737,13 @@ class BinnedPDF(Signal):
                         else:
                             idim = ldim
                         mask = mask & (t_ij[:,ldim] >= coords_lo[idim]) & (t_ij[:,ldim] <= coords_hi[idim])
-                    smeared_counts = get_smeared_counts(dim, mask)
-                    bin_spacing = np.diff(self.binning[dim])[0]
+                    smeared_counts = get_smeared_counts(dim, conv, wide_bins, mask)
+                    bin_spacing = cp.diff(self.binning[dim])[0]
                     counts[(*idx[:dim], slice(0,None), *idx[dim:])] = \
-                                    smeared_counts * bin_spacing*np.sum(self.counts[(*idx[:dim], slice(0,None), *idx[dim:])])
+                                    smeared_counts * bin_spacing*cp.sum(self.counts[(*idx[:dim], slice(0,None), *idx[dim:])])
             else:
                 dim=0
-                counts = get_smeared_counts(dim, mask)
-                bin_spacing = np.diff(self.binning[dim])[0]
+                counts = get_smeared_counts(dim, conv, wide_bins)
         return (counts.flatten()/self.bin_vol/cp.sum(counts)).reshape(counts.shape)
         
     def calculate(self, inputs, verbose=False):

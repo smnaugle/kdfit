@@ -19,6 +19,9 @@ import numpy as np
 from .term import UnbinnedNegativeLogLikelihoodFunction, BinnedNegativeLogLikelihoodFunction
 from .signal import Signal, KernelDensityPDF
 from .calculate import Calculation
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from .analysis import Analysis
 
 class Observables(Calculation):
     '''
@@ -35,8 +38,8 @@ class Observables(Calculation):
     
     def __init__(self, name, analysis, binning=None):
         self.name = name
-        self.analysis = analysis
-        self.dimensions = []
+        self.analysis: Analysis = analysis
+        self.dimensions: list[str] = []
         self.lows = []
         self.highs = []
         self.scales = []
@@ -44,7 +47,7 @@ class Observables(Calculation):
         self.resolutions = []
         
         self.binning = binning
-        self.signals = {}
+        self.signals: dict[str, Signal] = {}
         
         self.last_data = None
         # Should be linked to something that loads data when called (DataLoader)
